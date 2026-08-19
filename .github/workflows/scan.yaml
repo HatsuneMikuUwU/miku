@@ -14,71 +14,22 @@ jobs:
       contents: write
 
     steps:
-      - name: 📂 Checkout Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: 🛠️ Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.25"
+      - name: Use Bun
+        uses: oven-sh/setup-bun@v2
 
-      - name: 🔄 Sync pool -> Emilia input
+      - name: Start Scan
         run: |
-          mkdir -p Emilia/Data
-          if [ -f rawProxyList.txt ]; then
-            cp rawProxyList.txt Emilia/Data/Proxy_data20k.txt
-          else
-            echo "⚠️ rawProxyList.txt tidak ditemukan, skip."
-          fi
+          bun install && bun run ./helper/proxyip.ts
 
-      - name: 🚀 Run Emilia Scanner (Go)
-        working-directory: ./Emilia
-        env:
-          WORKER_URLS: ${{ secrets.WORKER_URLS }}
-        run: |
-          go run main.go
-
-      - name: 🔄 Sync Emilia output -> miku (proxyList.txt + kvProxyList.json)
-        run: |
-          if [ ! -f Emilia/Data/alive.txt ]; then
-            echo "⚠️ Tidak ada proxy alive, skip sync output."
-            exit 0
-          fi
-
-          # proxyList.txt dipakai langsung oleh _worker.js (format sama: IP,Port,CC,Org)
-          cp Emilia/Data/alive.txt proxyList.txt
-
-          # kvProxyList.json (dikelompokkan per negara, max 10 IP) - Emilia tidak generate ini,
-          # jadi dibikin manual dari hasil alive.txt
-          awk -F',' '
-            {
-              key = $3
-              if (count[key] < 10) {
-                if (data[key] != "") data[key] = data[key] ","
-                data[key] = data[key] "\"" $1 ":" $2 "\""
-                count[key]++
-              }
-            }
-            END {
-              printf "{\n"
-              first = 1
-              for (k in data) {
-                if (!first) printf ",\n"
-                printf "  \"%s\": [%s]", k, data[k]
-                first = 0
-              }
-              printf "\n}\n"
-            }
-          ' proxyList.txt > kvProxyList.json
-
-      - name: 📤 Commit Results
-        if: success()
+      - name: Publish Result
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add proxyList.txt kvProxyList.json
+          git add .
           if ! git diff --staged --quiet; then
-            git commit -m "Update proxyip via Emilia [skip ci]"
+            git commit -m "Update proxyip [skip ci]"
             git push origin main --force
           else
             echo "Tidak ada perubahan data, melewati tahap commit."

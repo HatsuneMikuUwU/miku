@@ -73,30 +73,6 @@ Klik tombol di bawah
 - Contoh daftar proxy [proxyList.txt](https://raw.githubusercontent.com/dickymuliafiqri/Nautica/refs/heads/main/proxyList.txt)
 - Contoh reverse proxy [example.com](https://example.com)
 
-# Proxy Scanner
-
-Scanner proxy pakai [Emilia](https://github.com/papapapapdelesia/Emilia) (Go), source-nya sudah ditaruh
-langsung di folder `Emilia/` di repo ini dan dijalankan lewat `.github/workflows/scan.yaml`.
-
-Emilia validasi tiap proxy lewat 3 layer (coba urut sampai salah satu berhasil):
-1. **Worker** — worker pribadi kalian (wajib diisi lewat secret `WORKER_URLS`, boleh lebih dari satu URL dipisah koma). Deploy `Emilia/api_check_workers.js` ke Cloudflare Workers kalian sendiri, lalu masukkan URL-nya ke secret ini.
-2. **CF-Trace** — `1.1.1.1/cdn-cgi/trace`
-3. **AWS-CheckIP** — `checkip.amazonaws.com`
-
-**Wajib** set secret repo `WORKER_URLS` (Settings → Secrets and variables → Actions), karena tanpa
-ini Emilia langsung berhenti (tidak ada fallback default):
-
-```
-WORKER_URLS=https://worker-kalian.workers.dev,https://worker-cadangan.workers.dev
-```
-
-Alur tiap kali workflow jalan:
-1. `rawProxyList.txt` (pool kandidat) di-copy jadi input Emilia (`Emilia/Data/Proxy_data20k.txt`)
-2. Emilia scan dan tulis hasil ke `Emilia/Data/alive.txt`
-3. Hasil itu di-sync balik jadi `proxyList.txt` (dipakai `_worker.js`) + `kvProxyList.json` (dikelompokkan per negara, max 10 IP)
-
-Catatan: `rawProxyList.txt` tidak lagi di-dedupe otomatis tiap scan (Emilia hanya membaca, tidak menulis ulang pool-nya).
-
 ## Cara Aktivasi API
 
 Salah satu fungsi API adalah agar kalian bisa melihat dan menambahkan subdomain wildcards ke workers.
