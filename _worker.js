@@ -15,7 +15,7 @@ const v2 = "djJyYXk=";
 
 // UUID yang dipakai oleh implementasi VMess pada vmessMod.zip.
 // Dapat dioverride melalui variable VMESS_UUID di Cloudflare Worker.
-const VMESS_UUID = "3b01a777-55e7-49f6-8637-d94ee69607c6";
+const VMESS_UUID = "be3f243e-91c3-4233-8ba1-68e4915353d0";
 
 const PORTS = [443, 80];
 const PROTOCOLS = [atob(horse), atob(flash), atob(neko), "ss"];
@@ -196,6 +196,33 @@ export default {
               for (const protocol of filterVPN) {
                 if (result.length >= filterLimit) break;
 
+                const proxyPath = `/${prx.prxIP}-${prx.prxPort}`;
+                const vmessLabel = `${result.length + 1} ${getFlagEmoji(prx.country)} ${prx.org} WS ${
+                  port == 443 ? "TLS" : "NTLS"
+                } [${serviceName}]`;
+
+                // VMess memakai format share link JSON Base64 standar agar kompatibel
+                // dengan klien umum seperti v2rayNG, Nekoray, dan sing-box.
+                if (protocol == atob(flash)) {
+                  const vmessConfig = {
+                    v: "2",
+                    ps: vmessLabel,
+                    add: fillerDomain,
+                    port: port.toString(),
+                    id: env.VMESS_UUID || VMESS_UUID,
+                    aid: "0",
+                    scy: "none",
+                    net: "ws",
+                    type: "none",
+                    host: APP_DOMAIN,
+                    path: proxyPath,
+                    tls: port == 443 ? "tls" : "",
+                    sni: port == 80 ? "" : APP_DOMAIN,
+                  };
+                  result.push(`vmess://${base64EncodeUtf8(JSON.stringify(vmessConfig))}`);
+                  continue;
+                }
+
                 uri.protocol = protocol;
                 uri.port = port.toString();
                 if (protocol == "ss") {
@@ -212,7 +239,7 @@ export default {
 
                 uri.searchParams.set("security", port == 443 ? "tls" : "none");
                 uri.searchParams.set("sni", port == 80 && protocol == atob(flash) ? "" : APP_DOMAIN);
-                uri.searchParams.set("path", `/${prx.prxIP}-${prx.prxPort}`);
+                uri.searchParams.set("path", proxyPath);
 
                 uri.hash = `${result.length + 1} ${getFlagEmoji(prx.country)} ${prx.org} WS ${
                   port == 443 ? "TLS" : "NTLS"
@@ -857,14 +884,13 @@ async function readStreamHeader(buffer, vmessUUID = VMESS_UUID) {
         addressRemote = `${view.getUint8(offset)}.${view.getUint8(offset + 1)}.${view.getUint8(offset + 2)}.${view.getUint8(offset + 3)}`;
         offset += 4;
         break;
-      case 2: // Domain (same as case 3 in Rust)
-      case 3: // Domain
+      case 2: // Domain
         const domainLength = view.getUint8(offset);
         offset += 1;
         addressRemote = new TextDecoder().decode(headerPayload.slice(offset, offset + domainLength));
         offset += domainLength;
         break;
-      case 4: // IPv6
+      case 3: // IPv6
         const ipv6Parts = [];
         for (let i = 0; i < 8; i++) {
           ipv6Parts.push(view.getUint16(offset + i * 2, false).toString(16));
@@ -1158,6 +1184,13 @@ async function checkPrxHealth(prxIP, prxPort) {
 }
 
 // Helpers
+function base64EncodeUtf8(value) {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
 function base64ToArrayBuffer(base64Str) {
   if (!base64Str) {
     return { error: null };
