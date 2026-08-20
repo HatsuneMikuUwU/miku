@@ -1,0 +1,36 @@
+name: Dedupe Proxy List
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 17 * * *"
+
+jobs:
+  dedupe:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: proxy-scan
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Remove Duplicate Proxies
+        run: |
+          bun install && bun run ./helper/dedupe.ts
+
+      - name: Publish Result
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          if ! git diff --staged --quiet; then
+            git commit -m "Remove duplicate proxy entries [skip ci]"
+            git push origin main --force
+          else
+            echo "Tidak ada duplikat, melewati tahap commit."
+          fi
