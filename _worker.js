@@ -13,6 +13,10 @@ const flash = "dm1lc3M=";
 const neko = "dmxlc3M=";
 const v2 = "djJyYXk=";
 
+// UUID yang dipakai oleh implementasi VMess pada vmessMod.zip.
+// Dapat dioverride melalui variable VMESS_UUID di Cloudflare Worker.
+const VMESS_UUID = "3b01a777-55e7-49f6-8637-d94ee69607c6";
+
 const PORTS = [443, 80];
 const PROTOCOLS = [atob(horse), atob(flash), atob(neko), "ss"];
 const SUB_PAGE_URL = "https://foolvpn.web.id/nautica";
@@ -134,10 +138,10 @@ export default {
 
           prxIP = kvPrx[prxKey][Math.floor(Math.random() * kvPrx[prxKey].length)];
 
-          return await websocketHandler(request);
+          return await websocketHandler(request, env);
         } else if (prxMatch) {
           prxIP = prxMatch[1];
-          return await websocketHandler(request);
+          return await websocketHandler(request, env);
         }
       }
 
@@ -203,7 +207,7 @@ export default {
                     };host=${APP_DOMAIN}`,
                   );
                 } else {
-                  uri.username = uuid;
+                  uri.username = protocol == atob(flash) ? (env.VMESS_UUID || VMESS_UUID) : uuid;
                 }
 
                 uri.searchParams.set("security", port == 443 ? "tls" : "none");
@@ -288,7 +292,7 @@ export default {
   },
 };
 
-async function websocketHandler(request) {
+async function websocketHandler(request, env) {
   const webSocketPair = new WebSocketPair();
   const [client, webSocket] = Object.values(webSocketPair);
 
@@ -330,13 +334,13 @@ async function websocketHandler(request) {
             return;
           }
 
-          const protocol = await protocolSniffer(chunk);
+          const protocol = await protocolSniffer(chunk, env?.VMESS_UUID || VMESS_UUID);
           let protocolHeader;
 
           if (protocol === atob(horse)) {
             protocolHeader = readHorseHeader(chunk);
           } else if (protocol === atob(flash)) {
-            protocolHeader = await readStreamHeader(chunk);
+            protocolHeader = await readStreamHeader(chunk, env?.VMESS_UUID || VMESS_UUID);
           } else if (protocol === atob(neko)) {
             protocolHeader = readNekoHeader(chunk);
           } else if (protocol === "ss") {
@@ -415,47 +419,69 @@ async function websocketHandler(request) {
   });
 }
 
-async function protocolSniffer(buffer) {
-  if (buffer.byteLength >= 62) {
-    const horseDelimiter = new Uint8Array(buffer.slice(56, 60));
-    if (horseDelimiter[0] === 0x0d && horseDelimiter[1] === 0x0a) {
-      if (horseDelimiter[2] === 0x01 || horseDelimiter[2] === 0x03 || horseDelimiter[2] === 0x7f) {
-        if (horseDelimiter[3] === 0x01 || horseDelimiter[3] === 0x03 || horseDelimiter[3] === 0x04) {
-          return atob(horse);
-        }
-      }
-    }
-  }
-
-  // Light protocol detection (VLESS) - check UUID v4 pattern
-  if (buffer.byteLength >= 18) {
-    const version = new Uint8Array(buffer.slice(0, 1))[0];
-    if (version === 0) {
-      const protocolUuid = new Uint8Array(buffer.slice(1, 17));
-      // Hanya mendukung UUID v4
-      if (arrayBufferToHex(protocolUuid).match(/^[0-9a-f]{8}[0-9a-f]{4}4[0-9a-f]{3}[89ab][0-9a-f]{3}[0-9a-f]{12}$/i)) {
-        return atob(neko);
-      }
-    }
-  }
-
-  // VMess AEAD detection: minimum 42 bytes (authId 16 + encLen 18 + nonce 8)
-  // But we need to be more selective - check if it's NOT shadowsocks first
-  if (buffer.byteLength >= 42) {
-    // Shadowsocks ATYP is always 1, 3, or 4 at first byte
-    const firstByte = new Uint8Array(buffer.slice(0, 1))[0];
-
-    // If first byte looks like SS address type, it's probably SS
-    if (firstByte === 0x01 || firstByte === 0x03 || firstByte === 0x04) {
-      // Likely Shadowsocks, not VMess
-      return "ss";
-    }
-
-    // Otherwise, assume it's VMess AEAD
+async function protocolSniffer(buffer, vmessUUID = VMESS_UUID) {
+  // VMess harus diverifikasi dengan AEAD, bukan ditebak dari byte pertama.
+  // Ini mencegah paket Shadowsocks dianggap sebagai VMess secara keliru.
+  if (await isVMess(buffer, vmessUUID)) {
     return atob(flash);
   }
 
-  return "ss"; // default
+  const data = new Uint8Array(buffer);
+  if (data.byteLength >= 62) {
+    const horseDelimiter = data.slice(56, 60);
+    if (
+      horseDelimiter[0] === 0x0d &&
+      horseDelimiter[1] === 0x0a &&
+      [0x01, 0x03, 0x7f].includes(horseDelimiter[2]) &&
+      [0x01, 0x03, 0x04].includes(horseDelimiter[3])
+    ) {
+      return atob(horse);
+    }
+  }
+
+  // VLESS: version 0 diikuti UUID v4.
+  if (data.byteLength >= 18 && data[0] === 0) {
+    const protocolUuid = data.slice(1, 17);
+    if (arrayBufferToHex(protocolUuid.buffer).match(/^[0-9a-f]{8}[0-9a-f]{4}4[0-9a-f]{3}[89ab][0-9a-f]{3}[0-9a-f]{12}$/i)) {
+      return atob(neko);
+    }
+  }
+
+  return "ss";
+}
+
+async function isVMess(buffer, vmessUUID = VMESS_UUID) {
+  const data = new Uint8Array(buffer);
+  if (data.byteLength < 42) return false;
+
+  try {
+    const authId = data.slice(0, 16);
+    const encryptedLength = data.slice(16, 34);
+    const nonce = data.slice(34, 42);
+    const authKey = await md5(
+      uuidToBytes(vmessUUID),
+      new TextEncoder().encode("c48619fe-8f02-49e0-b9e9-edf763e17e21"),
+    );
+    const lengthKey = (await kdf(authKey, [SALT_A1, authId, nonce])).slice(0, 16);
+    const lengthIv = (await kdf(authKey, [SALT_A2, authId, nonce])).slice(0, 12);
+    const lengthBytes = await aesGcmDecrypt(lengthKey, lengthIv, encryptedLength, authId);
+    const headerLength = (lengthBytes[0] << 8) | lengthBytes[1];
+    return headerLength > 0 && headerLength <= 4096;
+  } catch {
+    return false;
+  }
+}
+
+function uuidToBytes(uuid) {
+  const hex = uuid.replace(/-/g, "");
+  if (!/^[0-9a-f]{32}$/i.test(hex)) {
+    throw new Error("VMESS_UUID tidak valid");
+  }
+  const bytes = new Uint8Array(16);
+  for (let index = 0; index < bytes.length; index++) {
+    bytes[index] = parseInt(hex.slice(index * 2, index * 2 + 2), 16);
+  }
+  return bytes;
 }
 
 async function generateStreamResponseHeader(responseOptions, encKey, encIv) {
@@ -729,17 +755,9 @@ async function aesGcmEncrypt(key, nonce, data, aad) {
 }
 
 // Stream Protocol Handler
-async function readStreamHeader(buffer) {
+async function readStreamHeader(buffer, vmessUUID = VMESS_UUID) {
   try {
-    // For simplicity, we'll use a fixed UUID for decryption
-    // In production, this should be configured
-    const uuidString = "00000000-0000-0000-0000-000000000000";
-    const uuidBytes = new Uint8Array(
-      uuidString
-        .replace(/-/g, "")
-        .match(/.{1,2}/g)
-        .map((byte) => parseInt(byte, 16)),
-    );
+    const uuidBytes = uuidToBytes(vmessUUID);
 
     // Create MD5 hash of UUID + constant
     const authKey = await md5(
@@ -759,10 +777,20 @@ async function readStreamHeader(buffer) {
 
     // Decrypt header length (AAD is authId)
     const lengthBytes = await aesGcmDecrypt(lengthKey, lengthIv, encryptedLength, authId);
+    if (lengthBytes.byteLength < 2) {
+      throw new Error("VMess AEAD length tidak lengkap");
+    }
     const headerLength = (lengthBytes[0] << 8) | lengthBytes[1];
+    if (headerLength <= 0 || headerLength > 4096) {
+      throw new Error(`Panjang header VMess tidak valid: ${headerLength}`);
+    }
 
     // Read encrypted header payload (with 16 bytes GCM tag)
-    const encryptedHeader = new Uint8Array(buffer.slice(42, 42 + headerLength + 16));
+    const encryptedHeaderEnd = 42 + headerLength + 16;
+    if (buffer.byteLength < encryptedHeaderEnd) {
+      throw new Error("Data VMess tidak cukup untuk header terenkripsi");
+    }
+    const encryptedHeader = new Uint8Array(buffer.slice(42, encryptedHeaderEnd));
 
     // Derive keys for payload decryption
     const payloadKey = (await kdf(authKey, [SALT_A3, authId, nonce])).slice(0, 16);
@@ -807,7 +835,10 @@ async function readStreamHeader(buffer) {
     const cmd = view.getUint8(offset);
     offset += 1;
     console.log("[37] Command:", cmd, "| offset now:", offset);
-    const isUDP = cmd !== 0x01;
+    if (cmd !== 0x01 && cmd !== 0x02) {
+      return { hasError: true, message: `Command VMess tidak didukung: ${cmd}` };
+    }
+    const isUDP = cmd === 0x02;
 
     // Port (2 bytes, big-endian)
     const portRemote = view.getUint16(offset, false);
@@ -844,6 +875,10 @@ async function readStreamHeader(buffer) {
       default:
         console.log("ERROR: Invalid address type:", addressType, "at offset:", offset - 1);
         return { hasError: true, message: `Invalid address type: ${addressType} (hex: 0x${addressType.toString(16)})` };
+    }
+
+    if (!addressRemote) {
+      return { hasError: true, message: "Alamat tujuan VMess kosong" };
     }
 
     console.log("Final parsed address:", addressRemote);
