@@ -30,6 +30,10 @@ function keyOf(entry: ProxyEntry): string {
   return `${entry.address.toLowerCase()}:${entry.port}`;
 }
 
+function addressOf(entry: ProxyEntry): string {
+  return entry.address.toLowerCase();
+}
+
 function orgKeyOf(entry: ProxyEntry): string {
   return entry.org.trim().toLowerCase();
 }
@@ -62,11 +66,12 @@ async function readKvPair(): Promise<Record<string, string[]>> {
   }
 }
 
-// Buang entri dengan address:port yang sama ATAU org (nama penyedia) yang sama,
-// entri pertama yang ketemu yang dipertahankan. Org kosong tidak dianggap duplikat
-// satu sama lain (biar entri tanpa org gak keborong semua jadi satu).
+// Buang entri dengan address:port yang sama, ATAU org (nama penyedia) yang sama
+// dari address yang berbeda. IP yang sama dengan port beda TETAP dipertahankan
+// walau org-nya sama (dianggap satu host yang buka banyak port, bukan duplikat).
 function dedupeEntries(entries: ProxyEntry[]): { unique: ProxyEntry[]; removed: number } {
   const seenKeys = new Set<string>();
+  const seenAddresses = new Set<string>();
   const seenOrgs = new Set<string>();
   const unique: ProxyEntry[] = [];
 
@@ -74,10 +79,15 @@ function dedupeEntries(entries: ProxyEntry[]): { unique: ProxyEntry[]; removed: 
     const key = keyOf(entry);
     if (seenKeys.has(key)) continue;
 
+    const address = addressOf(entry);
     const orgKey = orgKeyOf(entry);
-    if (orgKey && seenOrgs.has(orgKey)) continue;
+    const sameHostDifferentPort = seenAddresses.has(address);
+
+    // Org duplikat cuma dianggap duplikat kalau address-nya juga baru
+    if (!sameHostDifferentPort && orgKey && seenOrgs.has(orgKey)) continue;
 
     seenKeys.add(key);
+    seenAddresses.add(address);
     if (orgKey) seenOrgs.add(orgKey);
     unique.push(entry);
   }
