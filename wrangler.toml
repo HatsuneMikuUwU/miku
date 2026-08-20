@@ -3,9 +3,6 @@ main = "_worker.js"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat_v2"]
 
-[vars]
-VMESS_UUID = "be3f243e-91c3-4233-8ba1-68e4915353d0"
-
 [unsafe.metadata.observability]
 enabled = true
 

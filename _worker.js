@@ -13,10 +13,6 @@ const flash = "dm1lc3M=";
 const neko = "dmxlc3M=";
 const v2 = "djJyYXk=";
 
-// UUID yang dipakai oleh implementasi VMess pada vmessMod.zip.
-// Dapat dioverride melalui variable VMESS_UUID di Cloudflare Worker.
-const VMESS_UUID = "be3f243e-91c3-4233-8ba1-68e4915353d0";
-
 const PORTS = [443, 80];
 const PROTOCOLS = [atob(horse), atob(flash), atob(neko), "ss"];
 const SUB_PAGE_URL = "https://foolvpn.web.id/nautica";
@@ -138,10 +134,10 @@ export default {
 
           prxIP = kvPrx[prxKey][Math.floor(Math.random() * kvPrx[prxKey].length)];
 
-          return await websocketHandler(request, env);
+          return await websocketHandler(request);
         } else if (prxMatch) {
           prxIP = prxMatch[1];
-          return await websocketHandler(request, env);
+          return await websocketHandler(request);
         }
       }
 
@@ -196,33 +192,6 @@ export default {
               for (const protocol of filterVPN) {
                 if (result.length >= filterLimit) break;
 
-                const proxyPath = `/${prx.prxIP}-${prx.prxPort}`;
-                const vmessLabel = `${result.length + 1} ${getFlagEmoji(prx.country)} ${prx.org} WS ${
-                  port == 443 ? "TLS" : "NTLS"
-                } [${serviceName}]`;
-
-                // VMess memakai format share link JSON Base64 standar agar kompatibel
-                // dengan klien umum seperti v2rayNG, Nekoray, dan sing-box.
-                if (protocol == atob(flash)) {
-                  const vmessConfig = {
-                    v: "2",
-                    ps: vmessLabel,
-                    add: fillerDomain,
-                    port: port.toString(),
-                    id: env.VMESS_UUID || VMESS_UUID,
-                    aid: "0",
-                    scy: "none",
-                    net: "ws",
-                    type: "none",
-                    host: APP_DOMAIN,
-                    path: proxyPath,
-                    tls: port == 443 ? "tls" : "",
-                    sni: port == 80 ? "" : APP_DOMAIN,
-                  };
-                  result.push(`vmess://${base64EncodeUtf8(JSON.stringify(vmessConfig))}`);
-                  continue;
-                }
-
                 uri.protocol = protocol;
                 uri.port = port.toString();
                 if (protocol == "ss") {
@@ -234,12 +203,12 @@ export default {
                     };host=${APP_DOMAIN}`,
                   );
                 } else {
-                  uri.username = protocol == atob(flash) ? (env.VMESS_UUID || VMESS_UUID) : uuid;
+                  uri.username = uuid;
                 }
 
                 uri.searchParams.set("security", port == 443 ? "tls" : "none");
                 uri.searchParams.set("sni", port == 80 && protocol == atob(flash) ? "" : APP_DOMAIN);
-                uri.searchParams.set("path", proxyPath);
+                uri.searchParams.set("path", `/${prx.prxIP}-${prx.prxPort}`);
 
                 uri.hash = `${result.length + 1} ${getFlagEmoji(prx.country)} ${prx.org} WS ${
                   port == 443 ? "TLS" : "NTLS"
@@ -319,7 +288,7 @@ export default {
   },
 };
 
-async function websocketHandler(request, env) {
+async function websocketHandler(request) {
   const webSocketPair = new WebSocketPair();
   const [client, webSocket] = Object.values(webSocketPair);
 
@@ -361,13 +330,13 @@ async function websocketHandler(request, env) {
             return;
           }
 
-          const protocol = await protocolSniffer(chunk, env?.VMESS_UUID || VMESS_UUID);
+          const protocol = await protocolSniffer(chunk);
           let protocolHeader;
 
           if (protocol === atob(horse)) {
             protocolHeader = readHorseHeader(chunk);
           } else if (protocol === atob(flash)) {
-            protocolHeader = await readStreamHeader(chunk, env?.VMESS_UUID || VMESS_UUID);
+            protocolHeader = await readStreamHeader(chunk);
           } else if (protocol === atob(neko)) {
             protocolHeader = readNekoHeader(chunk);
           } else if (protocol === "ss") {
@@ -446,69 +415,47 @@ async function websocketHandler(request, env) {
   });
 }
 
-async function protocolSniffer(buffer, vmessUUID = VMESS_UUID) {
-  // VMess harus diverifikasi dengan AEAD, bukan ditebak dari byte pertama.
-  // Ini mencegah paket Shadowsocks dianggap sebagai VMess secara keliru.
-  if (await isVMess(buffer, vmessUUID)) {
+async function protocolSniffer(buffer) {
+  if (buffer.byteLength >= 62) {
+    const horseDelimiter = new Uint8Array(buffer.slice(56, 60));
+    if (horseDelimiter[0] === 0x0d && horseDelimiter[1] === 0x0a) {
+      if (horseDelimiter[2] === 0x01 || horseDelimiter[2] === 0x03 || horseDelimiter[2] === 0x7f) {
+        if (horseDelimiter[3] === 0x01 || horseDelimiter[3] === 0x03 || horseDelimiter[3] === 0x04) {
+          return atob(horse);
+        }
+      }
+    }
+  }
+
+  // Light protocol detection (VLESS) - check UUID v4 pattern
+  if (buffer.byteLength >= 18) {
+    const version = new Uint8Array(buffer.slice(0, 1))[0];
+    if (version === 0) {
+      const protocolUuid = new Uint8Array(buffer.slice(1, 17));
+      // Hanya mendukung UUID v4
+      if (arrayBufferToHex(protocolUuid).match(/^[0-9a-f]{8}[0-9a-f]{4}4[0-9a-f]{3}[89ab][0-9a-f]{3}[0-9a-f]{12}$/i)) {
+        return atob(neko);
+      }
+    }
+  }
+
+  // VMess AEAD detection: minimum 42 bytes (authId 16 + encLen 18 + nonce 8)
+  // But we need to be more selective - check if it's NOT shadowsocks first
+  if (buffer.byteLength >= 42) {
+    // Shadowsocks ATYP is always 1, 3, or 4 at first byte
+    const firstByte = new Uint8Array(buffer.slice(0, 1))[0];
+
+    // If first byte looks like SS address type, it's probably SS
+    if (firstByte === 0x01 || firstByte === 0x03 || firstByte === 0x04) {
+      // Likely Shadowsocks, not VMess
+      return "ss";
+    }
+
+    // Otherwise, assume it's VMess AEAD
     return atob(flash);
   }
 
-  const data = new Uint8Array(buffer);
-  if (data.byteLength >= 62) {
-    const horseDelimiter = data.slice(56, 60);
-    if (
-      horseDelimiter[0] === 0x0d &&
-      horseDelimiter[1] === 0x0a &&
-      [0x01, 0x03, 0x7f].includes(horseDelimiter[2]) &&
-      [0x01, 0x03, 0x04].includes(horseDelimiter[3])
-    ) {
-      return atob(horse);
-    }
-  }
-
-  // VLESS: version 0 diikuti UUID v4.
-  if (data.byteLength >= 18 && data[0] === 0) {
-    const protocolUuid = data.slice(1, 17);
-    if (arrayBufferToHex(protocolUuid.buffer).match(/^[0-9a-f]{8}[0-9a-f]{4}4[0-9a-f]{3}[89ab][0-9a-f]{3}[0-9a-f]{12}$/i)) {
-      return atob(neko);
-    }
-  }
-
-  return "ss";
-}
-
-async function isVMess(buffer, vmessUUID = VMESS_UUID) {
-  const data = new Uint8Array(buffer);
-  if (data.byteLength < 42) return false;
-
-  try {
-    const authId = data.slice(0, 16);
-    const encryptedLength = data.slice(16, 34);
-    const nonce = data.slice(34, 42);
-    const authKey = await md5(
-      uuidToBytes(vmessUUID),
-      new TextEncoder().encode("c48619fe-8f02-49e0-b9e9-edf763e17e21"),
-    );
-    const lengthKey = (await kdf(authKey, [SALT_A1, authId, nonce])).slice(0, 16);
-    const lengthIv = (await kdf(authKey, [SALT_A2, authId, nonce])).slice(0, 12);
-    const lengthBytes = await aesGcmDecrypt(lengthKey, lengthIv, encryptedLength, authId);
-    const headerLength = (lengthBytes[0] << 8) | lengthBytes[1];
-    return headerLength > 0 && headerLength <= 4096;
-  } catch {
-    return false;
-  }
-}
-
-function uuidToBytes(uuid) {
-  const hex = uuid.replace(/-/g, "");
-  if (!/^[0-9a-f]{32}$/i.test(hex)) {
-    throw new Error("VMESS_UUID tidak valid");
-  }
-  const bytes = new Uint8Array(16);
-  for (let index = 0; index < bytes.length; index++) {
-    bytes[index] = parseInt(hex.slice(index * 2, index * 2 + 2), 16);
-  }
-  return bytes;
+  return "ss"; // default
 }
 
 async function generateStreamResponseHeader(responseOptions, encKey, encIv) {
@@ -782,9 +729,17 @@ async function aesGcmEncrypt(key, nonce, data, aad) {
 }
 
 // Stream Protocol Handler
-async function readStreamHeader(buffer, vmessUUID = VMESS_UUID) {
+async function readStreamHeader(buffer) {
   try {
-    const uuidBytes = uuidToBytes(vmessUUID);
+    // For simplicity, we'll use a fixed UUID for decryption
+    // In production, this should be configured
+    const uuidString = "00000000-0000-0000-0000-000000000000";
+    const uuidBytes = new Uint8Array(
+      uuidString
+        .replace(/-/g, "")
+        .match(/.{1,2}/g)
+        .map((byte) => parseInt(byte, 16)),
+    );
 
     // Create MD5 hash of UUID + constant
     const authKey = await md5(
@@ -804,20 +759,10 @@ async function readStreamHeader(buffer, vmessUUID = VMESS_UUID) {
 
     // Decrypt header length (AAD is authId)
     const lengthBytes = await aesGcmDecrypt(lengthKey, lengthIv, encryptedLength, authId);
-    if (lengthBytes.byteLength < 2) {
-      throw new Error("VMess AEAD length tidak lengkap");
-    }
     const headerLength = (lengthBytes[0] << 8) | lengthBytes[1];
-    if (headerLength <= 0 || headerLength > 4096) {
-      throw new Error(`Panjang header VMess tidak valid: ${headerLength}`);
-    }
 
     // Read encrypted header payload (with 16 bytes GCM tag)
-    const encryptedHeaderEnd = 42 + headerLength + 16;
-    if (buffer.byteLength < encryptedHeaderEnd) {
-      throw new Error("Data VMess tidak cukup untuk header terenkripsi");
-    }
-    const encryptedHeader = new Uint8Array(buffer.slice(42, encryptedHeaderEnd));
+    const encryptedHeader = new Uint8Array(buffer.slice(42, 42 + headerLength + 16));
 
     // Derive keys for payload decryption
     const payloadKey = (await kdf(authKey, [SALT_A3, authId, nonce])).slice(0, 16);
@@ -862,10 +807,7 @@ async function readStreamHeader(buffer, vmessUUID = VMESS_UUID) {
     const cmd = view.getUint8(offset);
     offset += 1;
     console.log("[37] Command:", cmd, "| offset now:", offset);
-    if (cmd !== 0x01 && cmd !== 0x02) {
-      return { hasError: true, message: `Command VMess tidak didukung: ${cmd}` };
-    }
-    const isUDP = cmd === 0x02;
+    const isUDP = cmd !== 0x01;
 
     // Port (2 bytes, big-endian)
     const portRemote = view.getUint16(offset, false);
@@ -884,13 +826,14 @@ async function readStreamHeader(buffer, vmessUUID = VMESS_UUID) {
         addressRemote = `${view.getUint8(offset)}.${view.getUint8(offset + 1)}.${view.getUint8(offset + 2)}.${view.getUint8(offset + 3)}`;
         offset += 4;
         break;
-      case 2: // Domain
+      case 2: // Domain (same as case 3 in Rust)
+      case 3: // Domain
         const domainLength = view.getUint8(offset);
         offset += 1;
         addressRemote = new TextDecoder().decode(headerPayload.slice(offset, offset + domainLength));
         offset += domainLength;
         break;
-      case 3: // IPv6
+      case 4: // IPv6
         const ipv6Parts = [];
         for (let i = 0; i < 8; i++) {
           ipv6Parts.push(view.getUint16(offset + i * 2, false).toString(16));
@@ -901,10 +844,6 @@ async function readStreamHeader(buffer, vmessUUID = VMESS_UUID) {
       default:
         console.log("ERROR: Invalid address type:", addressType, "at offset:", offset - 1);
         return { hasError: true, message: `Invalid address type: ${addressType} (hex: 0x${addressType.toString(16)})` };
-    }
-
-    if (!addressRemote) {
-      return { hasError: true, message: "Alamat tujuan VMess kosong" };
     }
 
     console.log("Final parsed address:", addressRemote);
@@ -1184,13 +1123,6 @@ async function checkPrxHealth(prxIP, prxPort) {
 }
 
 // Helpers
-function base64EncodeUtf8(value) {
-  const bytes = new TextEncoder().encode(value);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
 function base64ToArrayBuffer(base64Str) {
   if (!base64Str) {
     return { error: null };
