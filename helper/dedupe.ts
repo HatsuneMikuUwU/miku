@@ -30,6 +30,10 @@ function keyOf(entry: ProxyEntry): string {
   return `${entry.address.toLowerCase()}:${entry.port}`;
 }
 
+function orgKeyOf(entry: ProxyEntry): string {
+  return entry.org.trim().toLowerCase();
+}
+
 async function readEntryFile(path: string): Promise<ProxyEntry[]> {
   const file = Bun.file(path);
   if (!(await file.exists())) return [];
@@ -58,15 +62,23 @@ async function readKvPair(): Promise<Record<string, string[]>> {
   }
 }
 
-// Buang entri dengan address:port yang sama, entri pertama yang ketemu yang dipertahankan
+// Buang entri dengan address:port yang sama ATAU org (nama penyedia) yang sama,
+// entri pertama yang ketemu yang dipertahankan. Org kosong tidak dianggap duplikat
+// satu sama lain (biar entri tanpa org gak keborong semua jadi satu).
 function dedupeEntries(entries: ProxyEntry[]): { unique: ProxyEntry[]; removed: number } {
-  const seen = new Set<string>();
+  const seenKeys = new Set<string>();
+  const seenOrgs = new Set<string>();
   const unique: ProxyEntry[] = [];
 
   for (const entry of entries) {
     const key = keyOf(entry);
-    if (seen.has(key)) continue;
-    seen.add(key);
+    if (seenKeys.has(key)) continue;
+
+    const orgKey = orgKeyOf(entry);
+    if (orgKey && seenOrgs.has(orgKey)) continue;
+
+    seenKeys.add(key);
+    if (orgKey) seenOrgs.add(orgKey);
     unique.push(entry);
   }
 
@@ -87,15 +99,20 @@ function sortByCountry(a: ProxyEntry, b: ProxyEntry) {
   const { unique: uniqueRaw, removed: rawRemoved } = dedupeEntries(rawEntries);
   const { unique: uniqueActive, removed: activeRemoved } = dedupeEntries(activeEntries);
 
+  // kvProxyList.json gak nyimpen field org, jadi acuannya adalah key (address:port)
+  // yang masih valid di proxyList.txt setelah dedupe org+key di atas
+  const validActiveKeys = new Set(uniqueActive.map((e) => keyOf(e)));
+
   // Dedupe kvProxyList.json: dalam satu negara sekaligus lintas negara,
-  // key yang sudah dipakai negara sebelumnya (urutan file) tidak dipakai lagi
+  // key yang sudah dipakai negara sebelumnya (urutan file) tidak dipakai lagi,
+  // dan key yang udah kebuang dari proxyList.txt (karena org duplikat) juga dibuang
   const seenKvKeys = new Set<string>();
   let kvRemoved = 0;
   for (const country of Object.keys(kvPair)) {
     const uniqueList: string[] = [];
     for (const key of kvPair[country]) {
       const normalized = key.toLowerCase();
-      if (seenKvKeys.has(normalized)) {
+      if (seenKvKeys.has(normalized) || !validActiveKeys.has(normalized)) {
         kvRemoved += 1;
         continue;
       }
