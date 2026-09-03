@@ -4836,6 +4836,9 @@
 93.95.24.201,443,DE,GTHost
 193.37.70.230,2053,DE,Cloud Hosting Solutions Limited
 79.137.203.98,2083,DE,AEZA GROUP LLC
+103.228.171.224,2053,DE,Fornex Hosting SL
+217.177.10.159,443,DE,Fornex Hosting SL
+77.221.156.70,8443,DE,AEZA GROUP LLC
 45.136.70.204,443,DK,Webdockio ApS
 46.29.235.43,8443,DK,Global Internet Solutions
 192.36.27.150,8443,DK,EDIS Infrastructure in Denmark
@@ -6436,6 +6439,8 @@
 193.233.245.131,443,FI,Individual Entrepreneur Anton Levin
 94.182.147.86,443,FI,Hetzner Online GmbH
 87.251.16.237,8443,FI,1Cent Host
+31.76.19.206,443,FI,ITGarage
+31.76.50.23,2053,FI,XorekCloud Helsinki
 51.15.125.124,443,FR,Scaleway
 193.31.41.42,443,FR,Regxa Cloud
 104.156.151.62,2021,FR,Serverbike LTD
@@ -9560,6 +9565,7 @@
 94.131.83.94,8443,KZ,Cloud Services Kazakhstan LLP
 94.131.92.95,443,KZ,Cloud Services Kazakhstan LLP
 83.97.77.63,8443,KZ,Webstudio Onelab LLP
+88.218.70.62,443,KZ,Servercore Network
 194.0.194.145,443,LT,Serverio technologijos MB
 130.12.171.173,443,LT,SOLID Lithuania
 176.118.198.175,8443,LT,PROGRESYVUS SPRENDIMAI UAB
@@ -14303,6 +14309,11 @@
 89.125.253.49,443,NL,Snowd Security OU
 45.12.219.91,8443,NL,Melbikomas UAB
 45.12.219.92,8443,NL,Melbikomas UAB
+109.70.73.206,443,NL,LeaseWeb Netherlands BV
+138.124.90.81,443,NL,AEZA GROUP LLC
+77.246.100.139,2053,NL,Amsterdam Netherlands
+77.246.100.139,8443,NL,Amsterdam Netherlands
+95.215.8.28,443,NL,Baykov Ilya Sergeevich
 185.125.171.128,8443,NO,Gigahost AS
 194.5.98.105,2053,NO,WebHorizon Norway
 194.5.98.17,443,NO,WebHorizon IT Broadband Limited Norway
@@ -14596,6 +14607,8 @@
 95.85.246.250,443,PL,1Cent Host
 95.85.254.170,443,PL,1Cent Host
 95.85.254.27,443,PL,1Cent Host
+45.198.0.236,443,PL,ExpressHost LTD
+78.17.43.6,2053,PL,Snowd Security OU
 76.72.247.50,37456,PR,Neptuno Media Inc
 195.133.92.20,443,PT,Baxet Group Inc
 79.119.74.44,11557,RO,Digi Romania
@@ -18195,6 +18208,8 @@
 182.255.94.205,443,US,5G NETWORK OPERATIONS PTY LTD
 192.69.92.245,443,US,IT7 Networks Inc
 45.38.3.167,8443,US,Individual Entrepreneur Anton Levin
+104.164.48.221,8443,US,Baxet Group Inc
+38.95.79.242,443,US,Zont LLC
 157.22.128.7,443,UZ,SERVERCORE CIS FE LLC
 82.148.2.86,443,UZ,SERVERCORE UZ Network
 103.98.149.96,58904,VN,Maxserver Company Limited
