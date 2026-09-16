@@ -104,7 +104,7 @@ const CONFIG = Object.freeze({
     // VLESS UUID = this UUID
     // VMess ID   = this UUID
     // Trojan password = this UUID string
-    UUID: '965ef141-21c6-4b93-bcbd-f22adfbcca85',
+    UUID: '272f826e-a524-4638-8948-cd71f3950ed2',
     // Shadowsocks inbound method. methods supported:
     // aes-128-gcm, aes-256-gcm, chacha20-ietf-poly1305, xchacha20-ietf-poly1305,
     // 2022-blake3-aes-128-gcm, 2022-blake3-aes-256-gcm, 2022-blake3-chacha20-poly1305.
