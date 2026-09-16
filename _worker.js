@@ -73,7 +73,7 @@ async function subResponse(request, env) {
                 if (!SUB_PROTOCOLS.includes(protocol)) continue;
                 const uri = new URL(`${protocol}://${fillerDomain}`);
                 uri.port = String(port);
-                uri.username = protocol === 'ss' ? btoa(`none:${credential}`) : credential;
+                uri.username = protocol === 'ss' ? btoa(`aes-128-gcm:${credential}`) : credential;
                 uri.searchParams.set('type', 'ws');
                 uri.searchParams.set('host', appDomain);
                 const workerPath = `/${protocol}/${proxy.prxIP}-${proxy.prxPort}`;
@@ -104,7 +104,7 @@ const CONFIG = Object.freeze({
     // VLESS UUID = this UUID
     // VMess ID   = this UUID
     // Trojan password = this UUID string
-    UUID: '272f826e-a524-4638-8948-cd71f3950ed2',
+    UUID: '965ef141-21c6-4b93-bcbd-f22adfbcca85',
     // Shadowsocks inbound method. methods supported:
     // aes-128-gcm, aes-256-gcm, chacha20-ietf-poly1305, xchacha20-ietf-poly1305,
     // 2022-blake3-aes-128-gcm, 2022-blake3-aes-256-gcm, 2022-blake3-chacha20-poly1305.
@@ -3876,4 +3876,3 @@ function safeCloseWebSocket(ws) {
     }
     catch { }
 }
-
