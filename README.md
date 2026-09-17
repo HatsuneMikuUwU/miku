@@ -37,7 +37,7 @@ https://miku.hatsunemikuuwu.workers.dev/api/v1/sub?vpn=vless&cc=ID&domain=104.17
 | `domain` | Domain or IP used in generated client links | Current worker hostname |
 | `port` | Comma-separated ports, such as `443,80` | `443,80` |
 | `limit` | Maximum number of generated links | `10` |
-| `format` | Output format: `raw`, `base64`, `b64`, `vless`, `sfa`, or `bfr` | `raw` |
+| `format` | Output format: `raw` or `base64` | `raw` |
 | `prx-list` | Optional custom proxy-list URL | Repository proxy list |
 
 The generated links use the worker UUID configured in `CONFIG.UUID`. If the worker UUID is changed, redeploy the worker before using new subscription links.

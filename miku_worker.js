@@ -8,7 +8,6 @@ const SUB_PROTOCOLS = ['trojan', 'vmess', 'vless', 'ss'];
 const SUB_TYPES = ['ws', 'xhttp'];
 const SUB_PAGE_URL = 'https://foolvpn.web.id/nautica';
 const SUB_PROXY_LIST_URL = 'https://raw.githubusercontent.com/HatsuneMikuUwU/miku/refs/heads/main/proxyList.txt';
-const SUB_CONVERTER_URL = 'https://api.foolvpn.web.id/convert';
 const SUB_CORS = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,HEAD,POST,OPTIONS',
@@ -61,7 +60,8 @@ async function subResponse(request, env) {
     const transportType = SUB_TYPES.includes(requestedType) ? requestedType : 'ws';
     const rawLimit = Number.parseInt(url.searchParams.get('limit') || '10', 10);
     const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 1000) : 10;
-    const format = (url.searchParams.get('format') || 'raw').toLowerCase();
+    const requestedFormat = (url.searchParams.get('format') || 'raw').toLowerCase();
+    const format = requestedFormat === 'base64' ? 'base64' : 'raw';
     const fillerDomain = url.searchParams.get('domain') || appDomain;
     const proxyListUrl = url.searchParams.get('prx-list') || env?.PRX_BANK_URL || SUB_PROXY_LIST_URL;
     let proxies = await subGetProxyList(proxyListUrl);
@@ -93,12 +93,7 @@ async function subResponse(request, env) {
         if (result.length >= limit) break;
     }
     let body = result.join('\n');
-    if (format === 'base64' || format === 'b64') body = btoa(body);
-    else if (format === 'vless' || format === 'sfa' || format === 'bfr') {
-        const converted = await fetch(SUB_CONVERTER_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: result.join(','), format, template: 'cf' }) });
-        if (!converted.ok) return new Response(await converted.text(), { status: converted.status, headers: SUB_CORS });
-        body = await converted.text();
-    }
+    if (format === 'base64') body = btoa(body);
     return new Response(body, { status: 200, headers: { ...SUB_CORS, 'Cache-Control': 'no-store' } });
 }
 
@@ -2292,9 +2287,6 @@ export default {
                 const compatibility = await subResponse(request, env || {});
                 if (compatibility) return compatibility;
             }
-            if (url.pathname === '/' || url.pathname === '') {
-                return Response.redirect('https://dash.hitorigotoh.workers.dev', 302);
-            }
             const route = parseProtocolPath(url.pathname);
             if (!route) {
                 return new Response('Not Found', { status: 404 });
@@ -3882,4 +3874,3 @@ function safeCloseWebSocket(ws) {
     }
     catch { }
 }
-
