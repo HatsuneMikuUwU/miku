@@ -2372,7 +2372,7 @@ function handleXHttpStreamOne(request, route) {
     void pumpXHttpRequestBody(request.body, session, route.protocol);
     const headers = new Headers({
         'Cache-Control': 'no-store',
-        'Content-Type': 'text/event-stream',
+        'Content-Type': 'application/octet-stream',
         'X-Accel-Buffering': 'no',
     });
     return new Response(responseBody, {
