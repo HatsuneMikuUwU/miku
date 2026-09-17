@@ -6,7 +6,6 @@ import { Buffer } from 'node:buffer';
 const SUB_PORTS = [443, 80];
 const SUB_PROTOCOLS = ['trojan', 'vmess', 'vless', 'ss'];
 const SUB_TYPES = ['ws', 'xhttp'];
-const SUB_PAGE_URL = 'https://foolvpn.web.id/nautica';
 const SUB_PROXY_LIST_URL = 'https://raw.githubusercontent.com/HatsuneMikuUwU/miku/refs/heads/main/proxyList.txt';
 const SUB_CORS = {
     'Access-Control-Allow-Origin': '*',
@@ -2282,7 +2281,6 @@ export default {
         try {
             const url = new URL(request.url);
             if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: SUB_CORS });
-            if (url.pathname.startsWith('/sub')) return Response.redirect(`${SUB_PAGE_URL}?host=${url.hostname}`, 301);
             if (url.pathname.startsWith('/api/v1/')) {
                 const compatibility = await subResponse(request, env || {});
                 if (compatibility) return compatibility;

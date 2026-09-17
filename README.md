@@ -21,10 +21,34 @@ The subscription endpoint is:
 https://YOUR_WORKER_DOMAIN/api/v1/sub
 ```
 
-Example:
+Examples:
 
 ```text
-https://miku.hatsunemikuuwu.workers.dev/api/v1/sub?vpn=vless&cc=ID&domain=104.17.3.81&port=443&limit=100
+# VLESS WebSocket subscription, raw output
+https://YOUR_WORKER_DOMAIN/api/v1/sub?vpn=vless&type=ws&cc=ID&domain=104.17.3.81&port=443&limit=100&format=raw
+
+# VLESS XHTTP subscription, raw output
+https://YOUR_WORKER_DOMAIN/api/v1/sub?vpn=vless&type=xhttp&cc=ID&domain=104.17.3.81&port=443&limit=100&format=raw
+
+# Multiple protocols with WebSocket transport
+https://YOUR_WORKER_DOMAIN/api/v1/sub?vpn=vless,vmess,trojan,ss&type=ws&cc=ID&domain=104.17.3.81&port=443&limit=100&format=raw
+
+# Base64 subscription output
+https://YOUR_WORKER_DOMAIN/api/v1/sub?vpn=vless&type=ws&cc=ID&domain=104.17.3.81&port=443&limit=100&format=base64
+
+# VLESS WebSocket endpoint
+https://YOUR_WORKER_DOMAIN/vless
+
+# VLESS endpoint through a specific proxy address
+https://YOUR_WORKER_DOMAIN/vless/104.17.3.81-443
+
+# VMess, Trojan, and Shadowsocks endpoints
+https://YOUR_WORKER_DOMAIN/vmess
+https://YOUR_WORKER_DOMAIN/trojan
+https://YOUR_WORKER_DOMAIN/ss
+
+# Client IP information
+https://YOUR_WORKER_DOMAIN/api/v1/myip
 ```
 
 ### Query parameters
@@ -51,7 +75,6 @@ The generated links use the worker UUID configured in `CONFIG.UUID`. If the work
 | `/trojan` | Trojan endpoint |
 | `/ss` | Shadowsocks endpoint |
 | `/vless/IP:PORT` | Protocol endpoint using a specific proxy address |
-| `/sub` | Redirects to the subscription information page |
 | `/api/v1/sub` | Generates subscription links |
 | `/api/v1/myip` | Returns request IP and Cloudflare location data |
 
