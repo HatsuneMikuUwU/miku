@@ -18,13 +18,13 @@ A Cloudflare Worker that provides WebSocket-based proxy access for VLESS, VMess,
 The subscription endpoint is:
 
 ```text
-https://your.worker.domain/api/v1/sub
+https://YOUR_WORKER_DOMAIN/api/v1/sub
 ```
 
 Example:
 
 ```text
-https://your.worker.domain/api/v1/sub?vpn=vless&cc=ID&domain=104.17.3.81&port=443&limit=100
+https://miku.hatsunemikuuwu.workers.dev/api/v1/sub?vpn=vless&cc=ID&domain=104.17.3.81&port=443&limit=100
 ```
 
 ### Query parameters
@@ -32,6 +32,7 @@ https://your.worker.domain/api/v1/sub?vpn=vless&cc=ID&domain=104.17.3.81&port=44
 | Parameter | Description | Default |
 | --- | --- | --- |
 | `vpn` | Comma-separated protocols: `vless`, `vmess`, `trojan`, or `ss` | All protocols |
+| `type` | Transport type: `ws` or `xhttp` | `ws` |
 | `cc` | Comma-separated country codes, such as `ID,SG,US` | All countries |
 | `domain` | Domain or IP used in generated client links | Current worker hostname |
 | `port` | Comma-separated ports, such as `443,80` | `443,80` |
@@ -58,7 +59,7 @@ The protocol-specific routes accept a proxy suffix in the form `/PROTOCOL/IP-POR
 
 ## Configuration
 
-Edit the `CONFIG` object in `worker.js` before deployment when you need to change the worker credentials or relay behavior.
+Edit the `CONFIG` object in `miku_worker.js` before deployment when you need to change the worker credentials or relay behavior.
 
 Important settings include:
 
@@ -68,7 +69,7 @@ Important settings include:
 - `REJECT_UDP_443`: Whether UDP/443 should be rejected to force TCP fallback.
 - `DNS_DOH_URLS`: DNS-over-HTTPS resolver endpoints.
 
-The generated `_worker.js` is the Wrangler entrypoint configured by `wrangler.toml`. Keep `worker.js` and `_worker.js` synchronized when making source changes.
+The `miku_worker.js` file is the Wrangler entrypoint configured by `wrangler.toml`.
 
 ## Deployment
 
@@ -83,7 +84,7 @@ The project is configured with:
 
 ```toml
 name = "miku"
-main = "_worker.js"
+main = "miku_worker.js"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat_v2"]
 ```
@@ -95,8 +96,7 @@ The subscription endpoint uses the public proxy list by default. A different pro
 Run a syntax check before deployment:
 
 ```bash
-node --check worker.js
-node --check _worker.js
+node --check miku_worker.js
 ```
 
 ## License

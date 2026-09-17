@@ -5,6 +5,7 @@ import { Buffer } from 'node:buffer';
 // Miku subscription compatibility routes.
 const SUB_PORTS = [443, 80];
 const SUB_PROTOCOLS = ['trojan', 'vmess', 'vless', 'ss'];
+const SUB_TYPES = ['ws', 'xhttp'];
 const SUB_PAGE_URL = 'https://foolvpn.web.id/nautica';
 const SUB_PROXY_LIST_URL = 'https://raw.githubusercontent.com/HatsuneMikuUwU/miku/refs/heads/main/proxyList.txt';
 const SUB_CONVERTER_URL = 'https://api.foolvpn.web.id/convert';
@@ -56,6 +57,8 @@ async function subResponse(request, env) {
     const countries = url.searchParams.get('cc')?.split(',').filter(Boolean) || [];
     const ports = url.searchParams.get('port')?.split(',').filter(Boolean) || SUB_PORTS.map(String);
     const protocols = url.searchParams.get('vpn')?.split(',').filter(Boolean).map((p) => p.toLowerCase()) || SUB_PROTOCOLS;
+    const requestedType = (url.searchParams.get('type') || 'ws').toLowerCase();
+    const transportType = SUB_TYPES.includes(requestedType) ? requestedType : 'ws';
     const rawLimit = Number.parseInt(url.searchParams.get('limit') || '10', 10);
     const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 1000) : 10;
     const format = (url.searchParams.get('format') || 'raw').toLowerCase();
@@ -74,15 +77,15 @@ async function subResponse(request, env) {
                 const uri = new URL(`${protocol}://${fillerDomain}`);
                 uri.port = String(port);
                 uri.username = protocol === 'ss' ? btoa(`aes-128-gcm:${credential}`) : credential;
-                uri.searchParams.set('type', 'ws');
+                uri.searchParams.set('type', transportType);
                 uri.searchParams.set('host', appDomain);
                 const workerPath = `/${protocol}/${proxy.prxIP}-${proxy.prxPort}`;
                 uri.searchParams.set('path', workerPath);
                 uri.searchParams.set('security', String(port) === '443' ? 'tls' : 'none');
                 uri.searchParams.set('sni', String(port) === '80' && protocol === 'vmess' ? '' : appDomain);
-                if (protocol === 'ss') uri.searchParams.set('plugin', `v2ray-plugin${String(port) === '80' ? '' : ';tls'};mux=0;mode=websocket;path=${workerPath};host=${appDomain}`);
+                if (protocol === 'ss' && transportType === 'ws') uri.searchParams.set('plugin', `v2ray-plugin${String(port) === '80' ? '' : ';tls'};mux=0;mode=websocket;path=${workerPath};host=${appDomain}`);
                 if (protocol === 'trojan') uri.searchParams.set('encryption', 'none');
-                uri.hash = `${result.length + 1} ${subFlag(proxy.country)} ${proxy.org} WS ${String(port) === '443' ? 'TLS' : 'NTLS'} [${appDomain.split('.')[0]}]`;
+                uri.hash = `${result.length + 1} ${subFlag(proxy.country)} ${proxy.org} ${transportType.toUpperCase()} ${String(port) === '443' ? 'TLS' : 'NTLS'} [${appDomain.split('.')[0]}]`;
                 result.push(uri.toString());
             }
             if (result.length >= limit) break;
@@ -104,7 +107,7 @@ const CONFIG = Object.freeze({
     // VLESS UUID = this UUID
     // VMess ID   = this UUID
     // Trojan password = this UUID string
-    UUID: '965ef141-21c6-4b93-bcbd-f22adfbcca85',
+    UUID: '0d285c5a-58d9-4b66-922b-af428c4edf7c',
     // Shadowsocks inbound method. methods supported:
     // aes-128-gcm, aes-256-gcm, chacha20-ietf-poly1305, xchacha20-ietf-poly1305,
     // 2022-blake3-aes-128-gcm, 2022-blake3-aes-256-gcm, 2022-blake3-chacha20-poly1305.
@@ -121,7 +124,7 @@ const CONFIG = Object.freeze({
     MAX_TCP_PROXY_REPLAY: 4 * 1024 * 1024,
     // Force HTTP/3 / QUIC (UDP/443) to fail so browsers fall back to TCP/443.
     // This prevents normal web browsing from egressing through the VPS UDP relay.
-    REJECT_UDP_443: false,
+    REJECT_UDP_443: true,
     // DNS UDP/53 is resolved directly from the Worker over HTTPS so normal
     // browsing does not depend on the external UDP relay being reachable.
     DNS_DOH_URLS: [
@@ -2289,6 +2292,9 @@ export default {
                 const compatibility = await subResponse(request, env || {});
                 if (compatibility) return compatibility;
             }
+            if (url.pathname === '/' || url.pathname === '') {
+                return Response.redirect('https://dash.hitorigotoh.workers.dev', 302);
+            }
             const route = parseProtocolPath(url.pathname);
             if (!route) {
                 return new Response('Not Found', { status: 404 });
@@ -3876,3 +3882,4 @@ function safeCloseWebSocket(ws) {
     }
     catch { }
 }
+
