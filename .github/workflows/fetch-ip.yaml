@@ -3,7 +3,7 @@ name: Fetch IP List
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "0 0 * * 0"
 
 jobs:
   fetch:
@@ -32,5 +32,5 @@ jobs:
             git commit -m "Fetch & update proxyip from Country-ALIVE [skip ci]"
             git push origin main --force
           else
-            echo "Tidak ada perubahan data, melewati tahap commit."
+            echo "No data changes, skipping the commit stage."
           fi

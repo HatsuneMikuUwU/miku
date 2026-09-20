@@ -3,7 +3,7 @@ name: Dedupe Proxy List
 on:
   workflow_dispatch:
   schedule:
-    - cron: "30 17 * * *"
+    - cron: "0 0 * * 0"
 
 jobs:
   dedupe:
@@ -32,5 +32,5 @@ jobs:
             git commit -m "Remove duplicate proxy entries [skip ci]"
             git push origin main --force
           else
-            echo "Tidak ada duplikat, melewati tahap commit."
+            echo "No duplicates, skip commit stage."
           fi

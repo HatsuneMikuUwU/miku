@@ -3,7 +3,7 @@ name: Proxy Scanner
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 17 * * *"
+    - cron: "0 0 * * 0"
 
 jobs:
   scanner:
@@ -32,5 +32,5 @@ jobs:
             git commit -m "Update proxyip [skip ci]"
             git push origin main --force
           else
-            echo "Tidak ada perubahan data, melewati tahap commit."
+            echo "No data changes, skipping the commit stage."
           fi
