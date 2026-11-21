@@ -1,6 +1,528 @@
 import { connect } from 'cloudflare:sockets';
-import { createHash, createHmac, createCipheriv, createDecipheriv, timingSafeEqual, randomBytes, } from 'node:crypto';
-import { Buffer } from 'node:buffer';
+// Pure-JS Web-standard crypto & binary helpers (zero Node.js dependencies)
+function randomBytes(n) {
+    const out = new Uint8Array(n);
+    for (let off = 0; off < n; off += 65536) {
+        crypto.getRandomValues(out.subarray(off, Math.min(n, off + 65536)));
+    }
+    return out;
+}
+
+function timingSafeEqual(a, b) {
+    if (a.byteLength !== b.byteLength) return false;
+    let diff = 0;
+    for (let i = 0; i < a.byteLength; i++) diff |= a[i] ^ b[i];
+    return diff === 0;
+}
+
+function hexToBytes(hex) {
+    const clean = String(hex);
+    const out = new Uint8Array(clean.length >>> 1);
+    for (let i = 0; i < out.length; i++) {
+        out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+    }
+    return out;
+}
+
+function bytesToBase64(bytes) {
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+        bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(bin);
+}
+
+function bytesToAscii(bytes) {
+    let out = '';
+    for (let i = 0; i < bytes.length; i++) out += String.fromCharCode(bytes[i] & 0x7f);
+    return out;
+}
+
+const MD5_S = [
+    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+    5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+    4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+    6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+];
+const MD5_K = Uint32Array.from({ length: 64 }, (_, i) => Math.floor(Math.abs(Math.sin(i + 1)) * 0x100000000) >>> 0);
+
+function md5Raw(input) {
+    const len = input.byteLength;
+    const bitLen = len * 8;
+    const padLen = ((len + 9 + 63) & ~63);
+    const buf = new Uint8Array(padLen);
+    buf.set(input);
+    buf[len] = 0x80;
+    const dv = new DataView(buf.buffer);
+    dv.setUint32(padLen - 8, bitLen >>> 0, true);
+    dv.setUint32(padLen - 4, Math.floor(bitLen / 0x100000000) >>> 0, true);
+    let a0 = 0x67452301, b0 = 0xefcdab89, c0 = 0x98badcfe, d0 = 0x10325476;
+    const M = new Uint32Array(16);
+    for (let off = 0; off < padLen; off += 64) {
+        for (let j = 0; j < 16; j++) M[j] = dv.getUint32(off + j * 4, true);
+        let A = a0, B = b0, C = c0, D = d0;
+        for (let i = 0; i < 64; i++) {
+            let F, g;
+            if (i < 16) { F = (B & C) | ((~B) & D); g = i; }
+            else if (i < 32) { F = (D & B) | ((~D) & C); g = (5 * i + 1) & 15; }
+            else if (i < 48) { F = B ^ C ^ D; g = (3 * i + 5) & 15; }
+            else { F = C ^ (B | (~D)); g = (7 * i) & 15; }
+            const tmp = D;
+            D = C;
+            C = B;
+            const x = (A + F + MD5_K[i] + M[g]) >>> 0;
+            const s = MD5_S[i];
+            B = (B + (((x << s) | (x >>> (32 - s))) >>> 0)) >>> 0;
+            A = tmp;
+        }
+        a0 = (a0 + A) >>> 0;
+        b0 = (b0 + B) >>> 0;
+        c0 = (c0 + C) >>> 0;
+        d0 = (d0 + D) >>> 0;
+    }
+    const out = new Uint8Array(16);
+    const odv = new DataView(out.buffer);
+    odv.setUint32(0, a0, true);
+    odv.setUint32(4, b0, true);
+    odv.setUint32(8, c0, true);
+    odv.setUint32(12, d0, true);
+    return out;
+}
+
+function sha1Raw(input) {
+    const len = input.byteLength;
+    const bitLen = len * 8;
+    const padLen = ((len + 9 + 63) & ~63);
+    const buf = new Uint8Array(padLen);
+    buf.set(input);
+    buf[len] = 0x80;
+    const dv = new DataView(buf.buffer);
+    dv.setUint32(padLen - 8, Math.floor(bitLen / 0x100000000) >>> 0, false);
+    dv.setUint32(padLen - 4, bitLen >>> 0, false);
+    let h0 = 0x67452301, h1 = 0xefcdab89, h2 = 0x98badcfe, h3 = 0x10325476, h4 = 0xc3d2e1f0;
+    const W = new Uint32Array(80);
+    for (let off = 0; off < padLen; off += 64) {
+        for (let i = 0; i < 16; i++) W[i] = dv.getUint32(off + i * 4, false);
+        for (let i = 16; i < 80; i++) {
+            const t = W[i - 3] ^ W[i - 8] ^ W[i - 14] ^ W[i - 16];
+            W[i] = ((t << 1) | (t >>> 31)) >>> 0;
+        }
+        let a = h0, b = h1, c = h2, d = h3, e = h4;
+        for (let i = 0; i < 80; i++) {
+            let f, k;
+            if (i < 20) { f = (b & c) | ((~b) & d); k = 0x5a827999; }
+            else if (i < 40) { f = b ^ c ^ d; k = 0x6ed9eba1; }
+            else if (i < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8f1bbcdc; }
+            else { f = b ^ c ^ d; k = 0xca62c1d6; }
+            const temp = ((((a << 5) | (a >>> 27)) >>> 0) + f + e + k + W[i]) >>> 0;
+            e = d; d = c; c = ((b << 30) | (b >>> 2)) >>> 0; b = a; a = temp;
+        }
+        h0 = (h0 + a) >>> 0;
+        h1 = (h1 + b) >>> 0;
+        h2 = (h2 + c) >>> 0;
+        h3 = (h3 + d) >>> 0;
+        h4 = (h4 + e) >>> 0;
+    }
+    const out = new Uint8Array(20);
+    const odv = new DataView(out.buffer);
+    odv.setUint32(0, h0, false);
+    odv.setUint32(4, h1, false);
+    odv.setUint32(8, h2, false);
+    odv.setUint32(12, h3, false);
+    odv.setUint32(16, h4, false);
+    return out;
+}
+
+const SHA256_K = new Uint32Array([
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+]);
+const SHA256_IV = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+const SHA224_IV = [0xc1059ed8, 0x367cd507, 0x3070dd17, 0xf70e5939, 0xffc00b31, 0x68581511, 0x64f98fa7, 0xbefa4fa4];
+
+function sha256Core(input, iv, outBytes) {
+    const len = input.byteLength;
+    const bitLen = len * 8;
+    const padLen = ((len + 9 + 63) & ~63);
+    const buf = new Uint8Array(padLen);
+    buf.set(input);
+    buf[len] = 0x80;
+    const dv = new DataView(buf.buffer);
+    dv.setUint32(padLen - 8, Math.floor(bitLen / 0x100000000) >>> 0, false);
+    dv.setUint32(padLen - 4, bitLen >>> 0, false);
+    let h0 = iv[0], h1 = iv[1], h2 = iv[2], h3 = iv[3], h4 = iv[4], h5 = iv[5], h6 = iv[6], h7 = iv[7];
+    const W = new Uint32Array(64);
+    for (let off = 0; off < padLen; off += 64) {
+        for (let i = 0; i < 16; i++) W[i] = dv.getUint32(off + i * 4, false);
+        for (let i = 16; i < 64; i++) {
+            const w15 = W[i - 15], w2 = W[i - 2];
+            const s0 = ((w15 >>> 7) | (w15 << 25)) ^ ((w15 >>> 18) | (w15 << 14)) ^ (w15 >>> 3);
+            const s1 = ((w2 >>> 17) | (w2 << 15)) ^ ((w2 >>> 19) | (w2 << 13)) ^ (w2 >>> 10);
+            W[i] = (W[i - 16] + s0 + W[i - 7] + s1) >>> 0;
+        }
+        let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7;
+        for (let i = 0; i < 64; i++) {
+            const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+            const ch = (e & f) ^ ((~e) & g);
+            const t1 = (h + S1 + ch + SHA256_K[i] + W[i]) >>> 0;
+            const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+            const maj = (a & b) ^ (a & c) ^ (b & c);
+            const t2 = (S0 + maj) >>> 0;
+            h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+        }
+        h0 = (h0 + a) >>> 0; h1 = (h1 + b) >>> 0; h2 = (h2 + c) >>> 0; h3 = (h3 + d) >>> 0;
+        h4 = (h4 + e) >>> 0; h5 = (h5 + f) >>> 0; h6 = (h6 + g) >>> 0; h7 = (h7 + h) >>> 0;
+    }
+    const words = [h0, h1, h2, h3, h4, h5, h6, h7];
+    const out = new Uint8Array(outBytes);
+    const odv = new DataView(out.buffer);
+    for (let i = 0; i < outBytes / 4; i++) odv.setUint32(i * 4, words[i], false);
+    return out;
+}
+
+// Pure-JS AES-128 / AES-256 (FIPS 197) + AES-GCM (NIST SP 800-38D)
+const AES_SBOX = new Uint8Array([
+    0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,
+    0xca,0x82,0xc9,0x7d,0xfa,0x59,0x47,0xf0,0xad,0xd4,0xa2,0xaf,0x9c,0xa4,0x72,0xc0,
+    0xb7,0xfd,0x93,0x26,0x36,0x3f,0xf7,0xcc,0x34,0xa5,0xe5,0xf1,0x71,0xd8,0x31,0x15,
+    0x04,0xc7,0x23,0xc3,0x18,0x96,0x05,0x9a,0x07,0x12,0x80,0xe2,0xeb,0x27,0xb2,0x75,
+    0x09,0x83,0x2c,0x1a,0x1b,0x6e,0x5a,0xa0,0x52,0x3b,0xd6,0xb3,0x29,0xe3,0x2f,0x84,
+    0x53,0xd1,0x00,0xed,0x20,0xfc,0xb1,0x5b,0x6a,0xcb,0xbe,0x39,0x4a,0x4c,0x58,0xcf,
+    0xd0,0xef,0xaa,0xfb,0x43,0x4d,0x33,0x85,0x45,0xf9,0x02,0x7f,0x50,0x3c,0x9f,0xa8,
+    0x51,0xa3,0x40,0x8f,0x92,0x9d,0x38,0xf5,0xbc,0xb6,0xda,0x21,0x10,0xff,0xf3,0xd2,
+    0xcd,0x0c,0x13,0xec,0x5f,0x97,0x44,0x17,0xc4,0xa7,0x7e,0x3d,0x64,0x5d,0x19,0x73,
+    0x60,0x81,0x4f,0xdc,0x22,0x2a,0x90,0x88,0x46,0xee,0xb8,0x14,0xde,0x5e,0x0b,0xdb,
+    0xe0,0x32,0x3a,0x0a,0x49,0x06,0x24,0x5c,0xc2,0xd3,0xac,0x62,0x91,0x95,0xe4,0x79,
+    0xe7,0xc8,0x37,0x6d,0x8d,0xd5,0x4e,0xa9,0x6c,0x56,0xf4,0xea,0x65,0x7a,0xae,0x08,
+    0xba,0x78,0x25,0x2e,0x1c,0xa6,0xb4,0xc6,0xe8,0xdd,0x74,0x1f,0x4b,0xbd,0x8b,0x8a,
+    0x70,0x3e,0xb5,0x66,0x48,0x03,0xf6,0x0e,0x61,0x35,0x57,0xb9,0x86,0xc1,0x1d,0x9e,
+    0xe1,0xf8,0x98,0x11,0x69,0xd9,0x8e,0x94,0x9b,0x1e,0x87,0xe9,0xce,0x55,0x28,0xdf,
+    0x8c,0xa1,0x89,0x0d,0xbf,0xe6,0x42,0x68,0x41,0x99,0x2d,0x0f,0xb0,0x54,0xbb,0x16,
+]);
+const AES_INV_SBOX = new Uint8Array(256);
+for (let i = 0; i < 256; i++) AES_INV_SBOX[AES_SBOX[i]] = i;
+const AES_RCON = [0x00,0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x1b,0x36];
+
+function aesXtime(a) { return ((a << 1) ^ ((a & 0x80) ? 0x1b : 0)) & 0xff; }
+function aesMul(a, b) {
+    let p = 0;
+    for (let i = 0; i < 8; i++) {
+        if (b & 1) p ^= a;
+        a = aesXtime(a);
+        b >>>= 1;
+    }
+    return p;
+}
+
+function aesExpandKey(key) {
+    const nk = key.byteLength >>> 2;
+    if (nk !== 4 && nk !== 8) throw new Error(`unsupported AES key size ${key.byteLength}`);
+    const nr = nk + 6;
+    const w = new Uint8Array((nr + 1) * 16);
+    w.set(key);
+    for (let i = nk; i < (nr + 1) * 4; i++) {
+        let t0 = w[(i - 1) * 4], t1 = w[(i - 1) * 4 + 1], t2 = w[(i - 1) * 4 + 2], t3 = w[(i - 1) * 4 + 3];
+        if (i % nk === 0) {
+            const tmp = t0;
+            t0 = AES_SBOX[t1] ^ AES_RCON[i / nk];
+            t1 = AES_SBOX[t2];
+            t2 = AES_SBOX[t3];
+            t3 = AES_SBOX[tmp];
+        } else if (nk > 6 && i % nk === 4) {
+            t0 = AES_SBOX[t0]; t1 = AES_SBOX[t1]; t2 = AES_SBOX[t2]; t3 = AES_SBOX[t3];
+        }
+        const p = (i - nk) * 4;
+        w[i * 4] = w[p] ^ t0;
+        w[i * 4 + 1] = w[p + 1] ^ t1;
+        w[i * 4 + 2] = w[p + 2] ^ t2;
+        w[i * 4 + 3] = w[p + 3] ^ t3;
+    }
+    return { w, nr };
+}
+
+function aesEncryptBlockRaw(rk, input) {
+    const { w, nr } = rk;
+    const s = new Uint8Array(16);
+    for (let i = 0; i < 16; i++) s[i] = input[i] ^ w[i];
+    for (let r = 1; r <= nr; r++) {
+        // SubBytes + ShiftRows
+        const t0 = AES_SBOX[s[0]],  t1 = AES_SBOX[s[5]],  t2 = AES_SBOX[s[10]], t3 = AES_SBOX[s[15]];
+        const t4 = AES_SBOX[s[4]],  t5 = AES_SBOX[s[9]],  t6 = AES_SBOX[s[14]], t7 = AES_SBOX[s[3]];
+        const t8 = AES_SBOX[s[8]],  t9 = AES_SBOX[s[13]], t10 = AES_SBOX[s[2]], t11 = AES_SBOX[s[7]];
+        const t12 = AES_SBOX[s[12]], t13 = AES_SBOX[s[1]], t14 = AES_SBOX[s[6]], t15 = AES_SBOX[s[11]];
+        const ro = r * 16;
+        if (r < nr) {
+            const cols = [[t0,t1,t2,t3],[t4,t5,t6,t7],[t8,t9,t10,t11],[t12,t13,t14,t15]];
+            for (let c = 0; c < 4; c++) {
+                const [a0, a1, a2, a3] = cols[c];
+                const x = a0 ^ a1 ^ a2 ^ a3;
+                const o = c * 4;
+                s[o]     = a0 ^ x ^ aesXtime(a0 ^ a1) ^ w[ro + o];
+                s[o + 1] = a1 ^ x ^ aesXtime(a1 ^ a2) ^ w[ro + o + 1];
+                s[o + 2] = a2 ^ x ^ aesXtime(a2 ^ a3) ^ w[ro + o + 2];
+                s[o + 3] = a3 ^ x ^ aesXtime(a3 ^ a0) ^ w[ro + o + 3];
+            }
+        } else {
+            s[0]=t0^w[ro]; s[1]=t1^w[ro+1]; s[2]=t2^w[ro+2]; s[3]=t3^w[ro+3];
+            s[4]=t4^w[ro+4]; s[5]=t5^w[ro+5]; s[6]=t6^w[ro+6]; s[7]=t7^w[ro+7];
+            s[8]=t8^w[ro+8]; s[9]=t9^w[ro+9]; s[10]=t10^w[ro+10]; s[11]=t11^w[ro+11];
+            s[12]=t12^w[ro+12]; s[13]=t13^w[ro+13]; s[14]=t14^w[ro+14]; s[15]=t15^w[ro+15];
+        }
+    }
+    return s;
+}
+
+function aesDecryptBlockRaw(rk, input) {
+    const { w, nr } = rk;
+    const s = new Uint8Array(16);
+    const ro0 = nr * 16;
+    for (let i = 0; i < 16; i++) s[i] = input[i] ^ w[ro0 + i];
+    for (let r = nr - 1; r >= 0; r--) {
+        // InvShiftRows + InvSubBytes
+        const t0 = AES_INV_SBOX[s[0]],  t1 = AES_INV_SBOX[s[13]], t2 = AES_INV_SBOX[s[10]], t3 = AES_INV_SBOX[s[7]];
+        const t4 = AES_INV_SBOX[s[4]],  t5 = AES_INV_SBOX[s[1]],  t6 = AES_INV_SBOX[s[14]], t7 = AES_INV_SBOX[s[11]];
+        const t8 = AES_INV_SBOX[s[8]],  t9 = AES_INV_SBOX[s[5]],  t10 = AES_INV_SBOX[s[2]], t11 = AES_INV_SBOX[s[15]];
+        const t12 = AES_INV_SBOX[s[12]], t13 = AES_INV_SBOX[s[9]], t14 = AES_INV_SBOX[s[6]], t15 = AES_INV_SBOX[s[3]];
+        const ro = r * 16;
+        s[0]=t0^w[ro]; s[1]=t1^w[ro+1]; s[2]=t2^w[ro+2]; s[3]=t3^w[ro+3];
+        s[4]=t4^w[ro+4]; s[5]=t5^w[ro+5]; s[6]=t6^w[ro+6]; s[7]=t7^w[ro+7];
+        s[8]=t8^w[ro+8]; s[9]=t9^w[ro+9]; s[10]=t10^w[ro+10]; s[11]=t11^w[ro+11];
+        s[12]=t12^w[ro+12]; s[13]=t13^w[ro+13]; s[14]=t14^w[ro+14]; s[15]=t15^w[ro+15];
+        if (r > 0) {
+            for (let c = 0; c < 4; c++) {
+                const o = c * 4;
+                const a0 = s[o], a1 = s[o + 1], a2 = s[o + 2], a3 = s[o + 3];
+                s[o]     = aesMul(a0, 14) ^ aesMul(a1, 11) ^ aesMul(a2, 13) ^ aesMul(a3, 9);
+                s[o + 1] = aesMul(a0, 9)  ^ aesMul(a1, 14) ^ aesMul(a2, 11) ^ aesMul(a3, 13);
+                s[o + 2] = aesMul(a0, 13) ^ aesMul(a1, 9)  ^ aesMul(a2, 14) ^ aesMul(a3, 11);
+                s[o + 3] = aesMul(a0, 11) ^ aesMul(a1, 13) ^ aesMul(a2, 9)  ^ aesMul(a3, 14);
+            }
+        }
+    }
+    return s;
+}
+
+function ghashMul(X, Y) {
+    const Z = new Uint8Array(16);
+    const V = Y.slice();
+    for (let i = 0; i < 16; i++) {
+        let byte = X[i];
+        for (let b = 7; b >= 0; b--) {
+            if ((byte >>> b) & 1) {
+                for (let k = 0; k < 16; k++) Z[k] ^= V[k];
+            }
+            const lsb = V[15] & 1;
+            for (let k = 15; k > 0; k--) V[k] = (V[k] >>> 1) | ((V[k - 1] & 1) << 7);
+            V[0] >>>= 1;
+            if (lsb) V[0] ^= 0xe1;
+        }
+    }
+    return Z;
+}
+
+function ghash(H, aad, cipher) {
+    let Y = new Uint8Array(16);
+    const feed = (data) => {
+        for (let off = 0; off < data.byteLength; off += 16) {
+            const end = Math.min(off + 16, data.byteLength);
+            for (let i = 0; i < end - off; i++) Y[i] ^= data[off + i];
+            Y = ghashMul(Y, H);
+        }
+    };
+    if (aad && aad.byteLength) feed(aad);
+    if (cipher && cipher.byteLength) feed(cipher);
+    const lenBlock = new Uint8Array(16);
+    const dv = new DataView(lenBlock.buffer);
+    const aadBits = (aad ? aad.byteLength : 0) * 8;
+    const ctBits = (cipher ? cipher.byteLength : 0) * 8;
+    dv.setUint32(0, Math.floor(aadBits / 0x100000000) >>> 0, false);
+    dv.setUint32(4, aadBits >>> 0, false);
+    dv.setUint32(8, Math.floor(ctBits / 0x100000000) >>> 0, false);
+    dv.setUint32(12, ctBits >>> 0, false);
+    for (let i = 0; i < 16; i++) Y[i] ^= lenBlock[i];
+    return ghashMul(Y, H);
+}
+
+function gcmInc32(cb) {
+    const out = cb.slice();
+    const dv = new DataView(out.buffer);
+    dv.setUint32(12, (dv.getUint32(12, false) + 1) >>> 0, false);
+    return out;
+}
+
+function aesGcmCtr(rk, icb, input) {
+    const out = new Uint8Array(input.byteLength);
+    let cb = icb.slice();
+    for (let off = 0; off < input.byteLength; off += 16) {
+        const ks = aesEncryptBlockRaw(rk, cb);
+        const end = Math.min(off + 16, input.byteLength);
+        for (let i = 0; i < end - off; i++) out[off + i] = input[off + i] ^ ks[i];
+        cb = gcmInc32(cb);
+    }
+    return out;
+}
+
+function aesGcmJ0(H, nonce) {
+    if (nonce.byteLength === 12) {
+        const j0 = new Uint8Array(16);
+        j0.set(nonce, 0);
+        j0[15] = 1;
+        return j0;
+    }
+    return ghash(H, null, nonce);
+}
+
+function aesGcmSeal(key, nonce, plain, aad = null) {
+    const rk = aesExpandKey(key);
+    const H = aesEncryptBlockRaw(rk, new Uint8Array(16));
+    const J0 = aesGcmJ0(H, nonce);
+    const ct = aesGcmCtr(rk, gcmInc32(J0), plain);
+    const S = ghash(H, aad, ct);
+    const mask = aesEncryptBlockRaw(rk, J0);
+    const tag = new Uint8Array(16);
+    for (let i = 0; i < 16; i++) tag[i] = S[i] ^ mask[i];
+    const out = new Uint8Array(ct.byteLength + 16);
+    out.set(ct, 0);
+    out.set(tag, ct.byteLength);
+    return out;
+}
+
+function aesGcmOpen(key, nonce, sealed, aad = null) {
+    if (sealed.byteLength < 16) throw new Error('AEAD ciphertext too short');
+    const rk = aesExpandKey(key);
+    const H = aesEncryptBlockRaw(rk, new Uint8Array(16));
+    const J0 = aesGcmJ0(H, nonce);
+    const ct = sealed.subarray(0, sealed.byteLength - 16);
+    const tag = sealed.subarray(sealed.byteLength - 16);
+    const S = ghash(H, aad, ct);
+    const mask = aesEncryptBlockRaw(rk, J0);
+    const expected = new Uint8Array(16);
+    for (let i = 0; i < 16; i++) expected[i] = S[i] ^ mask[i];
+    if (!timingSafeEqual(expected, tag)) throw new Error('Unsupported state or unable to authenticate data');
+    return aesGcmCtr(rk, gcmInc32(J0), ct);
+}
+
+// Pure-JS ChaCha20-Poly1305 (RFC 8439)
+function chacha20Block(key, counter, nonce) {
+    const dvK = new DataView(key.buffer, key.byteOffset, key.byteLength);
+    const dvN = new DataView(nonce.buffer, nonce.byteOffset, nonce.byteLength);
+    const state = new Uint32Array([
+        0x61707865, 0x3320646e, 0x79622d32, 0x6b206574,
+        dvK.getUint32(0, true), dvK.getUint32(4, true), dvK.getUint32(8, true), dvK.getUint32(12, true),
+        dvK.getUint32(16, true), dvK.getUint32(20, true), dvK.getUint32(24, true), dvK.getUint32(28, true),
+        counter >>> 0,
+        dvN.getUint32(0, true), dvN.getUint32(4, true), dvN.getUint32(8, true),
+    ]);
+    const w = state.slice();
+    const rotl = (v, n) => ((v << n) | (v >>> (32 - n))) >>> 0;
+    const qr = (a, b, c, d) => {
+        w[a] = (w[a] + w[b]) >>> 0; w[d] = rotl(w[d] ^ w[a], 16);
+        w[c] = (w[c] + w[d]) >>> 0; w[b] = rotl(w[b] ^ w[c], 12);
+        w[a] = (w[a] + w[b]) >>> 0; w[d] = rotl(w[d] ^ w[a], 8);
+        w[c] = (w[c] + w[d]) >>> 0; w[b] = rotl(w[b] ^ w[c], 7);
+    };
+    for (let i = 0; i < 10; i++) {
+        qr(0, 4, 8, 12); qr(1, 5, 9, 13); qr(2, 6, 10, 14); qr(3, 7, 11, 15);
+        qr(0, 5, 10, 15); qr(1, 6, 11, 12); qr(2, 7, 8, 13); qr(3, 4, 9, 14);
+    }
+    const out = new Uint8Array(64);
+    const dvO = new DataView(out.buffer);
+    for (let i = 0; i < 16; i++) dvO.setUint32(i * 4, (w[i] + state[i]) >>> 0, true);
+    return out;
+}
+
+function chacha20Xor(key, counter, nonce, input) {
+    const out = new Uint8Array(input.byteLength);
+    for (let off = 0, c = counter >>> 0; off < input.byteLength; off += 64, c = (c + 1) >>> 0) {
+        const block = chacha20Block(key, c, nonce);
+        const end = Math.min(off + 64, input.byteLength);
+        for (let i = 0; i < end - off; i++) out[off + i] = input[off + i] ^ block[i];
+    }
+    return out;
+}
+
+const POLY1305_P = (1n << 130n) - 5n;
+function bytesToBigIntLE(bytes) {
+    let n = 0n;
+    for (let i = bytes.length - 1; i >= 0; i--) n = (n << 8n) | BigInt(bytes[i]);
+    return n;
+}
+
+function poly1305Mac(otk, msg) {
+    const rBytes = otk.slice(0, 16);
+    rBytes[3] &= 15; rBytes[7] &= 15; rBytes[11] &= 15; rBytes[15] &= 15;
+    rBytes[4] &= 252; rBytes[8] &= 252; rBytes[12] &= 252;
+    const r = bytesToBigIntLE(rBytes);
+    const s = bytesToBigIntLE(otk.subarray(16, 32));
+    let acc = 0n;
+    for (let off = 0; off < msg.byteLength; off += 16) {
+        const chunk = msg.subarray(off, Math.min(off + 16, msg.byteLength));
+        let n = bytesToBigIntLE(chunk) | (1n << BigInt(chunk.byteLength * 8));
+        acc = ((acc + n) * r) % POLY1305_P;
+    }
+    acc = (acc + s) & ((1n << 128n) - 1n);
+    const tag = new Uint8Array(16);
+    for (let i = 0; i < 16; i++) {
+        tag[i] = Number((acc >> BigInt(i * 8)) & 0xffn);
+    }
+    return tag;
+}
+
+function chacha20Poly1305MacData(aad, ct) {
+    const aadLen = aad ? aad.byteLength : 0;
+    const ctLen = ct.byteLength;
+    const aadPad = (16 - (aadLen % 16)) % 16;
+    const ctPad = (16 - (ctLen % 16)) % 16;
+    const out = new Uint8Array(aadLen + aadPad + ctLen + ctPad + 16);
+    if (aadLen) out.set(aad, 0);
+    out.set(ct, aadLen + aadPad);
+    const dv = new DataView(out.buffer);
+    const lenOff = aadLen + aadPad + ctLen + ctPad;
+    dv.setUint32(lenOff, aadLen >>> 0, true);
+    dv.setUint32(lenOff + 4, Math.floor(aadLen / 0x100000000) >>> 0, true);
+    dv.setUint32(lenOff + 8, ctLen >>> 0, true);
+    dv.setUint32(lenOff + 12, Math.floor(ctLen / 0x100000000) >>> 0, true);
+    return out;
+}
+
+function chacha20Poly1305Seal(key, nonce, plain, aad = null) {
+    const otk = chacha20Block(key, 0, nonce).subarray(0, 32);
+    const ct = chacha20Xor(key, 1, nonce, plain);
+    const tag = poly1305Mac(otk, chacha20Poly1305MacData(aad, ct));
+    const out = new Uint8Array(ct.byteLength + 16);
+    out.set(ct, 0);
+    out.set(tag, ct.byteLength);
+    return out;
+}
+
+function chacha20Poly1305Open(key, nonce, sealed, aad = null) {
+    if (sealed.byteLength < 16) throw new Error('AEAD ciphertext too short');
+    const ct = sealed.subarray(0, sealed.byteLength - 16);
+    const tag = sealed.subarray(sealed.byteLength - 16);
+    const otk = chacha20Block(key, 0, nonce).subarray(0, 32);
+    const expected = poly1305Mac(otk, chacha20Poly1305MacData(aad, ct));
+    if (!timingSafeEqual(expected, tag)) throw new Error('Unsupported state or unable to authenticate data');
+    return chacha20Xor(key, 1, nonce, ct);
+}
+
+function pureAeadSeal(name, key, nonce, plain, aad = null) {
+    if (name === 'chacha20-poly1305') return chacha20Poly1305Seal(key, nonce, plain, aad);
+    if (name === 'aes-128-gcm' || name === 'aes-256-gcm') return aesGcmSeal(key, nonce, plain, aad);
+    throw new Error(`unsupported AEAD cipher ${name}`);
+}
+
+function pureAeadOpen(name, key, nonce, sealed, aad = null) {
+    if (name === 'chacha20-poly1305') return chacha20Poly1305Open(key, nonce, sealed, aad);
+    if (name === 'aes-128-gcm' || name === 'aes-256-gcm') return aesGcmOpen(key, nonce, sealed, aad);
+    throw new Error(`unsupported AEAD cipher ${name}`);
+}
+
 
 // Miku subscription compatibility routes.
 const SUB_PORTS = [443, 80];
@@ -205,14 +727,14 @@ function toU8Sync(value) {
     if (ArrayBuffer.isView(value)) {
         return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
     }
-    if (Buffer.isBuffer(value)) {
-        return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-    }
     throw new TypeError('expected binary data');
 }
 
 function bytesToHex(bytes) {
-    return Buffer.from(toU8Sync(bytes)).toString('hex');
+    const u8 = toU8Sync(bytes);
+    let out = '';
+    for (let i = 0; i < u8.length; i++) out += u8[i].toString(16).padStart(2, '0');
+    return out;
 }
 
 function normalizeUUID(text) {
@@ -225,7 +747,7 @@ function normalizeUUID(text) {
 
 function uuidToBytes(text) {
     const s = normalizeUUID(text).replaceAll('-', '');
-    return new Uint8Array(Buffer.from(s, 'hex'));
+    return hexToBytes(s);
 }
 
 function formatUUID(bytes) {
@@ -247,21 +769,19 @@ function processVlessUUID(bytes) {
 }
 
 function secureEqual(a, b) {
-    const aa = Buffer.from(toU8Sync(a));
-    const bb = Buffer.from(toU8Sync(b));
-    return aa.length === bb.length && timingSafeEqual(aa, bb);
+    return timingSafeEqual(toU8Sync(a), toU8Sync(b));
 }
 
 function md5(data) {
-    return new Uint8Array(createHash('md5').update(Buffer.from(toU8Sync(data))).digest());
+    return md5Raw(toU8Sync(data));
 }
 
 function sha256(data) {
-    return new Uint8Array(createHash('sha256').update(Buffer.from(toU8Sync(data))).digest());
+    return sha256Core(toU8Sync(data), SHA256_IV, 32);
 }
 
 function sha224Hex(text) {
-    return createHash('sha224').update(String(text), 'utf8').digest('hex');
+    return bytesToHex(sha256Core(utf8(text), SHA224_IV, 28));
 }
 
 function crc32(bytes) {
@@ -282,7 +802,7 @@ function fnv1a32(bytes) {
 }
 
 function hmacSha256(key, data) {
-    return new Uint8Array(createHmac('sha256', Buffer.from(toU8Sync(key))).update(Buffer.from(toU8Sync(data))).digest());
+    return hmacWithHash(sha256, toU8Sync(key), toU8Sync(data));
 }
 
 function hmacWithHash(hashFn, key, data) {
@@ -342,12 +862,8 @@ function normalizeAeadKey(security, key) {
 
 function aeadSeal(security, key, nonce, plain, aad = null) {
     const name = cipherAeadName(security);
-    const cipher = createCipheriv(name, Buffer.from(normalizeAeadKey(security, key)), Buffer.from(toU8Sync(nonce)), { authTagLength: 16 });
-    if (aad && toU8Sync(aad).byteLength) {
-        cipher.setAAD(Buffer.from(toU8Sync(aad)), { plaintextLength: toU8Sync(plain).byteLength });
-    }
-    const c = Buffer.concat([cipher.update(Buffer.from(toU8Sync(plain))), cipher.final()]);
-    return concatBytes(c, cipher.getAuthTag());
+    const aadBytes = aad && toU8Sync(aad).byteLength ? toU8Sync(aad) : null;
+    return pureAeadSeal(name, normalizeAeadKey(security, key), toU8Sync(nonce), toU8Sync(plain), aadBytes);
 }
 
 function aeadOpen(security, key, nonce, sealed, aad = null) {
@@ -356,14 +872,8 @@ function aeadOpen(security, key, nonce, sealed, aad = null) {
         throw new Error('AEAD ciphertext too short');
     }
     const name = cipherAeadName(security);
-    const body = input.subarray(0, input.byteLength - 16);
-    const tag = input.subarray(input.byteLength - 16);
-    const decipher = createDecipheriv(name, Buffer.from(normalizeAeadKey(security, key)), Buffer.from(toU8Sync(nonce)), { authTagLength: 16 });
-    if (aad && toU8Sync(aad).byteLength) {
-        decipher.setAAD(Buffer.from(toU8Sync(aad)), { plaintextLength: body.byteLength });
-    }
-    decipher.setAuthTag(Buffer.from(tag));
-    return new Uint8Array(Buffer.concat([decipher.update(Buffer.from(body)), decipher.final()]));
+    const aadBytes = aad && toU8Sync(aad).byteLength ? toU8Sync(aad) : null;
+    return pureAeadOpen(name, normalizeAeadKey(security, key), toU8Sync(nonce), input, aadBytes);
 }
 
 function aesEcbDecryptBlock(key, block) {
@@ -375,9 +885,7 @@ function aesEcbDecryptBlock(key, block) {
     if (b.byteLength !== 16) {
         throw new Error(`VMess AuthID block must be 16 bytes, got ${b.byteLength}`);
     }
-    const decipher = createDecipheriv('aes-128-cbc', Buffer.from(k), Buffer.alloc(16));
-    decipher.setAutoPadding(false);
-    return new Uint8Array(Buffer.concat([decipher.update(Buffer.from(b)), decipher.final()]));
+    return aesDecryptBlockRaw(aesExpandKey(k), b);
 }
 
 function aesEcbEncryptBlock(key, block) {
@@ -389,9 +897,7 @@ function aesEcbEncryptBlock(key, block) {
     if (b.byteLength !== 16) {
         throw new Error(`VMess AuthID block must be 16 bytes, got ${b.byteLength}`);
     }
-    const cipher = createCipheriv('aes-128-cbc', Buffer.from(k), Buffer.alloc(16));
-    cipher.setAutoPadding(false);
-    return new Uint8Array(Buffer.concat([cipher.update(Buffer.from(b)), cipher.final()]));
+    return aesEncryptBlockRaw(aesExpandKey(k), b);
 }
 
 function parseRelayEndpoint(bytes, offset = 0) {
@@ -867,7 +1373,7 @@ function tryParseTrojanHeader(bytes, expectedHashHex) {
     if (b.byteLength < 59) {
         return null;
     }
-    const got = Buffer.from(b.subarray(0, 56)).toString('ascii');
+    const got = bytesToAscii(b.subarray(0, 56));
     if (got.length !== 56 || got.toLowerCase() !== String(expectedHashHex).toLowerCase()) {
         throw new Error('invalid Trojan password hash');
     }
@@ -1487,7 +1993,7 @@ function ssLegacyMasterKey(password, keySize) {
     return out.slice(0, keySize);
 }
 
-function hmacSha1(key, data) { return new Uint8Array(createHmac('sha1', Buffer.from(key)).update(Buffer.from(data)).digest()); }
+function hmacSha1(key, data) { return hmacWithHash(sha1Raw, toU8Sync(key), toU8Sync(data)); }
 function hkdfSha1(secret, salt, info, length) {
     const prk = hmacSha1(salt, secret);
     let t = new Uint8Array(0), out = new Uint8Array(0), c = 1;
@@ -1592,7 +2098,7 @@ function ss2022NormalizePsk(decodedPassword, keySize) {
     return sha256(p).slice(0, keySize);
 }
 
-function ss2022PasswordFromUuid(uuidBytes) { return Buffer.from(ss2022RootPasswordBytesFromUuid(uuidBytes)).toString('base64'); }
+function ss2022PasswordFromUuid(uuidBytes) { return bytesToBase64(ss2022RootPasswordBytesFromUuid(uuidBytes)); }
 function ss2022PskCandidatesFromUuid(uuidBytes, keySize) {
     const u = toU8Sync(uuidBytes);
     if (u.length !== 16) {
@@ -1654,16 +2160,17 @@ function normalizeCipher(spec, key, nonce) {
     return { name: 'chacha20-poly1305', key: hchacha20(key, n.slice(0, 16)), nonce: concatBytes(new Uint8Array(4), n.slice(16, 24)) };
 }
 
-function ssSeal(spec, key, nonce, plain) { const c = normalizeCipher(spec, key, nonce); const cipher = createCipheriv(c.name, Buffer.from(c.key), Buffer.from(c.nonce), { authTagLength: 16 }); const body = Buffer.concat([cipher.update(Buffer.from(toU8Sync(plain))), cipher.final()]); return concatBytes(body, cipher.getAuthTag()); }
+function ssSeal(spec, key, nonce, plain) {
+    const c = normalizeCipher(spec, key, nonce);
+    return pureAeadSeal(c.name, c.key, c.nonce, toU8Sync(plain), null);
+}
 function ssOpen(spec, key, nonce, sealed) {
     const input = toU8Sync(sealed);
     if (input.length < 16) {
         throw new Error('SS AEAD short');
     }
-    const c = normalizeCipher(spec, key, nonce), body = input.slice(0, -16), tag = input.slice(-16);
-    const d = createDecipheriv(c.name, Buffer.from(c.key), Buffer.from(c.nonce), { authTagLength: 16 });
-    d.setAuthTag(Buffer.from(tag));
-    return new Uint8Array(Buffer.concat([d.update(Buffer.from(body)), d.final()]));
+    const c = normalizeCipher(spec, key, nonce);
+    return pureAeadOpen(c.name, c.key, c.nonce, input, null);
 }
 
 function incNonce(n) {
